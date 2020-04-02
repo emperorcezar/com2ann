@@ -63,3 +63,5 @@ var: List[int]
 class Test:
     attr: str
 ```
+
+To quote annotations for all but basic types, use the `--quote` flag.
