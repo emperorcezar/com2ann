@@ -47,6 +47,7 @@ class Options:
     add_future_imports: bool = False
     wrap_signatures: int = 0
     python_minor_version: int = -1
+    quote: bool
 
 
 class RvalueKind(Enum):
@@ -484,7 +485,11 @@ def string_insert(line: str, extra: str, pos: int) -> str:
 
 
 def process_assign(
-    comment: AssignData, data: FileData, drop_none: bool, drop_ellipsis: bool
+    comment: AssignData,
+    data: FileData,
+    drop_none: bool,
+    drop_ellipsis: bool,
+    quote: bool,
 ) -> None:
     """Process type comment in an assignment statement.
 
@@ -575,7 +580,8 @@ def process_assign(
     ):
         comment.lvalue_end_offset += 1
 
-    typ = quote_non_basic_types(typ)
+    if quote:
+        typ = quote_non_basic_types(typ)
 
     lines[comment.lvalue_end_line - 1] = (
         lvalue_line[: comment.lvalue_end_offset]
@@ -585,16 +591,17 @@ def process_assign(
     )
 
 
-def insert_arg_type(line: str, arg: ArgComment, seen: Set[str]) -> str:
+def insert_arg_type(line: str, arg: ArgComment, seen: Set[str], quote) -> str:
     """Insert the argument type at a given location.
 
     Also record the type we translated.
     """
     typ, _ = split_sub_comment(arg.type_comment)
     seen.add(typ)
-    new_typ = quote_non_basic_types(typ)
+    if quote:
+        typ = quote_non_basic_types(typ)
 
-    new_line = line[: arg.arg_end_offset] + ": " + new_typ
+    new_line = line[: arg.arg_end_offset] + ": " + typ
 
     rest = line[arg.arg_end_offset :]
     if not arg.has_default:
@@ -602,10 +609,7 @@ def insert_arg_type(line: str, arg: ArgComment, seen: Set[str]) -> str:
 
     # Here we are a bit opinionated about spacing (see PEP 8).
     rest = rest.lstrip()
-    if rest[0] != "=":
-        import ipdb
-
-        ipdb.set_trace()
+    assert rest[0] == "="
     rest = rest[1:].lstrip()
 
     return new_line + " = " + rest
@@ -679,7 +683,9 @@ def wrap_function_header(header: str) -> List[str]:
     return parts
 
 
-def process_func_def(func_type: FunctionData, data: FileData, wrap_sig: int) -> None:
+def process_func_def(
+    func_type: FunctionData, data: FileData, wrap_sig: int, quote: bool
+) -> None:
     """Perform translation for an (async) function definition.
 
     This supports two main ways of adding type comments for argument:
@@ -727,13 +733,14 @@ def process_func_def(func_type: FunctionData, data: FileData, wrap_sig: int) -> 
             lines[ret_line][: right_par + 1]
             + " -> "
             + quote_non_basic_types(func_type.ret_type)
-            + lines[ret_line][colon:]
+            if quote
+            else func_type.ret_type + lines[ret_line][colon:]
         )
 
     # Inserting argument types is pretty straightforward.
     for arg in reversed(func_type.arg_types):
         lines[arg.arg_line - 1] = insert_arg_type(
-            lines[arg.arg_line - 1], arg, data.seen
+            lines[arg.arg_line - 1], arg, data.seen, quote
         )
 
     # Finally wrap the translated function header if needed.
@@ -750,6 +757,7 @@ def com2ann_impl(
     wrap_sig: int = 0,
     silent: bool = True,
     add_future_imports: bool = False,
+    quote: bool = False,
 ) -> str:
     """Collect type annotations in AST and perform code translation.
 
@@ -765,10 +773,10 @@ def com2ann_impl(
     # Perform translations in reverse order to avoid shuffling line numbers.
     for item in found:
         if isinstance(item, AssignData):
-            process_assign(item, data, drop_none, drop_ellipsis)
+            process_assign(item, data, drop_none, drop_ellipsis, quote)
             data.success.append(item.lvalue_end_line)
         elif isinstance(item, FunctionData):
-            process_func_def(item, data, wrap_sig)
+            process_func_def(item, data, wrap_sig, quote)
             data.success.append(item.header_start_line)
 
     if add_future_imports and data.success and not data.seen <= FUTURE_IMPORT_WHITELIST:
@@ -960,6 +968,9 @@ def main() -> None:
         type=int,
         default=-1,
     )
+    parser.add_argument(
+        "-q", "--quote", help="Wrap any non-basic types in quotes", action="store_true"
+    )
 
     args = parser.parse_args()
     if args.outfile is None:
@@ -972,6 +983,7 @@ def main() -> None:
         args.add_future_imports,
         args.wrap_signatures,
         args.python_minor_version,
+        args.quote,
     )
 
     if os.path.isfile(args.infile):
