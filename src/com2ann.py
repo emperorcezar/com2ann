@@ -1014,6 +1014,9 @@ BASIC_TYPES = [
     "dict",
     "tuple",
     "None",
+    "Union",
+    "Tuple",
+    "Dict",
 ]
 
 
